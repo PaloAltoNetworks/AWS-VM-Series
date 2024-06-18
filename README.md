@@ -33,10 +33,11 @@ You can set up this environment in the following way:
 2. Open AWS CloudShell, wait for the CLI prompt to show up.
 3. Clone the github repository.
 ```
-git clone https://github.com/AfrahAyub/panw-aws-jam-challenge-resources.git && cd panw-aws-jam-challenge-resources
+git clone https://github.com/PaloAltoNetworks/AWS-VM-Series.git && cd AWS-VM-Series
 ```
 4. Run the setup command.
 ```
+chmod +x setup-cft.sh
 ./setup-cft.sh
 ```
 
