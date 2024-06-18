@@ -1,0 +1,390 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  Root Stack for Jam Challenge with VM-Series and AWS Gateway Load Balancer (GWLB))
+
+# ======================================================================================================================
+#   Parameters / Mappings
+# ======================================================================================================================
+
+
+Parameters:
+# KeyPair Parameter
+  KeyName:
+    Type: String
+    Description: Name of the KeyPair used for EC2 instances
+    ConstraintDescription: 'Must be the name of an existing EC2 KeyPair.'
+
+# Management Network CIDR
+  RemoteManagementCIDR:
+    Description: >-
+      Remote Management CIDR to be allowed management access to VM-Series Firewall (e.g. 192.168.0.0/25)
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})
+    ConstraintDescription: Must be a valid CIDR (e.g. 0.0.0.0/0)
+
+# Security VPC CIDR IP Range
+  SecurityVPCCIDR:
+    Description: >-
+      CIDR Address Range for SecurityVPC (e.g. 10.0.0.0/24)
+    Type: String
+    Default: 10.0.0.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+# Frontend VPC CIDR IP Range
+  FrontendVPCCIDR:
+    Description: >-
+      CIDR Address Range for FrontendVPC (e.g. 10.1.0.0/16)
+    Type: String
+    Default: 10.1.0.0/16
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+# Frontend VPC Subnets
+  FrontendVPCSubnetPrivateCIDRAZ1:
+    Description: >-
+      CIDR for VM Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.1.1.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  FrontendVPCSubnetPublicCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.1.2.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  FrontendVPCSubnetGwlbeCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.1.3.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+# Data VPC CIDR IP Range
+  DataVPCCIDR:
+    Description: >-
+      CIDR Address Range for DataVPC (e.g. 10.2.0.0/16)
+    Type: String
+    Default: 10.2.0.0/16
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+# Data VPC Subnets
+  DataVPCSubnetPrivateCIDRAZ1:
+    Description: >-
+      CIDR for Data VM Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.2.1.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  DataVPCSubnetPublicCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.2.0.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  # AZ1 Subnets CIDRs
+
+  SecurityVPCNATGWSubnetCIDRAZ1:
+    Description: >-
+      CIDR for NAT Gateway Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.0.0.0/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SecurityVPCGWLBESubnetCIDRAZ1:
+    Description: >-
+      CIDR for GWLBE Subnet (e.g. 10.0.0.16/28)
+    Type: String
+    Default: 10.0.0.16/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SecurityVPCTGWSubnetCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.32/28)
+    Type: String
+    Default: 10.0.0.32/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SecurityVPCVMSeriesDataSubnetCIDRAZ1:
+    Description: >-
+      CIDR for VMSeries Data Subnet (e.g. 10.0.0.48/28)
+    Type: String
+    Default: 10.0.0.48/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SourceS3BucketName:
+    Description: >-
+      Source bucket with bootstrap content intended to be used for Jam Session / AWS Events platform. Objects here will be be copied to new bucket in appropriate bootstrap structure
+    Type: String
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$|^$
+    ConstraintDescription: Must be a valid S3 Bucket name or left blank for no Bootstrap.
+    Default: __source_s3_bucket_name__
+
+  SourceS3BucketPath:
+    Type: String
+    Description: Name of the path in the S3 bucket where the bootstrap content is located. Should match the Jam Session ID
+    ConstraintDescription: 'Must match the Jam Session ID.'
+    Default: panw-vmseries-gwlb
+
+  SecurityCftTemplateName:
+    Type: String
+    Description: Object name including file extension of CFN template in S3 bucket. Will be concatenated with SourceS3BucketName and SourceS3BucketPath
+    ConstraintDescription: 'CFN template file name only. Dont include bucket name or path'
+    Default: aws-panw-gwlb-cfn-security.yaml
+
+  VmSeriesCftTemplateName:
+    Type: String
+    Description: Object name including file extension of CFN template in S3 bucket. Will be concatenated with SourceS3BucketName and SourceS3BucketPath
+    ConstraintDescription: 'CFN template file name only. Dont include bucket name or path'
+    Default: aws-panw-gwlb-cfn-vmseries.yaml
+
+  FrontendCftTemplateName:
+    Type: String
+    Description: Object name including file extension of CFN template in S3 bucket. Will be concatenated with SourceS3BucketName and SourceS3BucketPath
+    ConstraintDescription: 'CFN template file name only. Dont include bucket name or path'
+    Default: aws-panw-gwlb-cfn-combined.yaml
+
+  DataNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources in Data VPC
+    ConstraintDescription: 'String for naming.'
+    Default: Beer Store Data
+
+  FrontendNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources in Frontend VPC
+    ConstraintDescription: 'String for naming.'
+    Default: Beer Store Frontend
+
+# Naming Prefix
+  SecurityNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources
+    ConstraintDescription: 'String for naming.'
+    Default: Security
+
+# Naming Prefix
+  AttackerNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources
+    ConstraintDescription: 'String for naming.'
+    Default: Sneaky Suds
+
+# Data VPC CIDR IP Range
+  AttackerVPCCIDR:
+    Description: >-
+      CIDR Address Range for AttackerVPC (e.g. 10.2.0.0/16)
+    Type: String
+    Default: 192.168.10.0/23
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+# Attacker VPC Subnets
+  AttackerVPCSubnetPrivateCIDRAZ1:
+    Description: >-
+      CIDR for Attacker VM Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 192.168.10.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  AttackerVPCSubnetPublicCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 192.168.11.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+
+# ======================================================================================================================
+#   Metadata
+# ======================================================================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Shared Parameters"
+        Parameters:
+          - KeyName
+          - SourceS3BucketName
+          - SourceS3BucketPath
+      -
+        Label:
+          default: "Security VPC Parameters"
+        Parameters:
+          - SecurityVPCCIDR
+          - SecurityVPCNATGWSubnetCIDRAZ1
+          - SecurityVPCGWLBESubnetCIDRAZ1
+          - SecurityVPCTGWSubnetCIDRAZ1
+          - SecurityVPCVMSeriesDataSubnetCIDRAZ1
+          - RemoteManagementCIDR
+          - VMSeriesInstanceType
+          - SecurityCftTemplateName
+          - SecurityNamePrefix
+      -
+        Label:
+          default: "Combined VPC Parameters"
+        Parameters:
+          - FrontendVPCCIDR
+          - FrontendVPCSubnetPrivateCIDRAZ1
+          - FrontendVPCSubnetPublicCIDRAZ1
+          - FrontendVPCSubnetGwlbeCIDRAZ1
+          - FrontendCftTemplateName
+          - FrontendNamePrefix
+          - DataVPCCIDR
+          - DataVPCSubnetPrivateCIDRAZ1
+          - DataVPCSubnetPublicCIDRAZ1
+          - DataCftTemplateName
+          - DataNamePrefix
+          - AttackerVPCCIDR
+          - AttackerVPCSubnetPrivateCIDRAZ1
+          - AttackerVPCSubnetPublicCIDRAZ1
+          - AttackerCftTemplateName
+          - AttackerNamePrefix
+
+    ParameterLabels:
+      SecurityVPCCIDR:
+        default: "IP CIDR for the Security VPC"
+      SecurityVPCNATGWSubnetCIDRAZ1:
+        default: "IP CIDR for NAT GW Subnet in AZ1"
+      SecurityVPCGWLBESubnetCIDRAZ1:
+        default: "IP CIDR for GWLB Endpoint in AZ1"
+      SecurityVPCTGWSubnetCIDRAZ1:
+        default: "IP CIDR for TGW Attachment in AZ1"
+      SecurityVPCVMSeriesDataSubnetCIDRAZ1:
+        default: "IP CIDR for VM-Series Data Plane Interface in AZ1"
+      VMSeriesInstanceType:
+        default: "EC2 Instance Type for VM-Series"
+      RemoteManagementCIDR:
+        default: "IP CIDR for Allowed Remote Management of the VM-Series"
+      FrontendVPCCIDR:
+        default: "IP CIDR for the Frontend VPC"
+      FrontendVPCSubnetPrivateCIDRAZ1:
+        default: "IP CIDR for Private Subnet in AZ1"
+      FrontendVPCSubnetPublicCIDRAZ1:
+        default: "IP CIDR for Public Subnet in AZ1"
+      FrontendVPCSubnetGwlbeCIDRAZ1:
+        default: "IP CIDR for GWLB Endpoint Subnet in AZ1"
+      DataVPCCIDR:
+        default: "IP CIDR for the Data VPC"
+      DataVPCSubnetPrivateCIDRAZ1:
+        default: "IP CIDR for Data Private Subnet in AZ1"
+      DataVPCSubnetPublicCIDRAZ1:
+        default: "IP CIDR for Data Public Subnet in AZ1"
+      SecurityCftTemplateName:
+        default: "Name of CFN template for Security VPC in S3"
+      FrontendCftTemplateName:
+        default: "Name of CFN template for Frontend VPC in S3"
+      FrontendNamePrefix:
+        default: "Prefix to be used in naming resrouces in Data / DB VPC"
+      DataCftTemplateName:
+        default: "Name of CFN template for Data VPC in S3"
+      DataNamePrefix:
+        default: "Prefix to be used in naming resrouces in Data / DB VPC"
+      SecurityNamePrefix:
+        default: "Prefix to be used in naming resrouces in Security VPC"
+      AttackerNamePrefix:
+        default: "Prefix to be used in naming resrouces in Attacker VPC"
+      AttackerVPCCIDR:
+        default: "IP CIDR for the Attacker VPC"
+      AttackerVPCSubnetPrivateCIDRAZ1:
+        default: "IP CIDR for Attacker Private Subnet in AZ1"
+      AttackerVPCSubnetPublicCIDRAZ1:
+        default: "IP CIDR for Attacker Public Subnet in AZ1"
+
+# ======================================================================================================================
+#   Resources
+# ======================================================================================================================
+
+Resources:
+
+  SecurityStack:
+    Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TemplateURL: !Sub 'https://${SourceS3BucketName}.s3.amazonaws.com/${SourceS3BucketPath}/${SecurityCftTemplateName}'
+      Parameters:
+        KeyName: !Ref KeyName
+        RemoteManagementCIDR: !Ref RemoteManagementCIDR
+        SecurityVPCCIDR: !Ref SecurityVPCCIDR
+        SecurityVPCNATGWSubnetCIDRAZ1: !Ref SecurityVPCNATGWSubnetCIDRAZ1
+        SecurityVPCGWLBESubnetCIDRAZ1: !Ref SecurityVPCGWLBESubnetCIDRAZ1
+        SecurityVPCTGWSubnetCIDRAZ1: !Ref SecurityVPCTGWSubnetCIDRAZ1
+        SecurityVPCVMSeriesDataSubnetCIDRAZ1: !Ref SecurityVPCVMSeriesDataSubnetCIDRAZ1
+        SourceS3BucketName: !Ref SourceS3BucketName
+        SourceS3BucketPath: !Ref SourceS3BucketPath
+        SecurityNamePrefix: !Ref SecurityNamePrefix
+
+  VmSeriesStack:
+    Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn:
+         - SecurityStack
+         - CombinedStack
+    Properties:
+      TemplateURL: !Sub 'https://${SourceS3BucketName}.s3.amazonaws.com/${SourceS3BucketPath}/${VmSeriesCftTemplateName}'
+      Parameters:
+        KeyName: !Ref KeyName
+        RemoteManagementCIDR: !Ref RemoteManagementCIDR
+        SourceS3BucketName: !Ref SourceS3BucketName
+        SourceS3BucketPath: !Ref SourceS3BucketPath
+        SecurityNamePrefix: !Ref SecurityNamePrefix
+
+  CombinedStack:
+    Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn:
+         - SecurityStack
+    Properties:
+      TemplateURL: !Sub 'https://${SourceS3BucketName}.s3.amazonaws.com/${SourceS3BucketPath}/${FrontendCftTemplateName}'
+      Parameters:
+        KeyName: !Ref KeyName
+        RemoteManagementCIDR: !Ref RemoteManagementCIDR
+        FrontendVPCCIDR: !Ref FrontendVPCCIDR
+        FrontendVPCSubnetPrivateCIDRAZ1: !Ref FrontendVPCSubnetPrivateCIDRAZ1
+        FrontendVPCSubnetPublicCIDRAZ1: !Ref FrontendVPCSubnetPublicCIDRAZ1
+        FrontendVPCSubnetGwlbeCIDRAZ1: !Ref FrontendVPCSubnetGwlbeCIDRAZ1
+        FrontendNamePrefix: !Ref FrontendNamePrefix
+        DataVPCCIDR: !Ref DataVPCCIDR # Before data stack
+        DataVPCSubnetPrivateCIDRAZ1: !Ref DataVPCSubnetPrivateCIDRAZ1 # Before data stack
+        DataVPCSubnetPublicCIDRAZ1: !Ref DataVPCSubnetPublicCIDRAZ1 # Before data stack
+        DataNamePrefix: !Ref DataNamePrefix # Before data stack
+        AttackerVPCCIDR: !Ref AttackerVPCCIDR # Before attacker stack
+        AttackerVPCSubnetPrivateCIDRAZ1: !Ref AttackerVPCSubnetPrivateCIDRAZ1 # Before attacker stack
+        AttackerVPCSubnetPublicCIDRAZ1: !Ref AttackerVPCSubnetPublicCIDRAZ1 # Before attacker stack
+        AttackerNamePrefix: !Ref AttackerNamePrefix # Before attacker stack
+
+
+
+
+
+# ======================================================================================================================
+#   Outputs
+# ======================================================================================================================
+
+Outputs:
+
+  KeyName:
+    Description: The SSH KeyPair Name
+    Value: !Ref KeyName
