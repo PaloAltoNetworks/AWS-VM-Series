@@ -1,0 +1,451 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  VM-Series Deployment Stack into existing VPC / GWLB.
+
+# ======================================================================================================================
+#   Parameters / Maapings
+# ======================================================================================================================
+
+# Updated to 11.0.2-h1 Custom AMIs
+Mappings:
+  PANFWRegionMap:
+    eu-north-1:
+      AMI: ami-04527e8b09f7eb406
+    eu-west-1:
+      AMI: ami-0a44de9db9dd95a6c
+    us-east-1:
+      AMI: ami-06899917ae226f293
+    us-east-2:
+      AMI: ami-0fd909759c03f961d
+    us-west-1:
+      AMI: ami-09dd60214faaafc71
+    us-west-2:
+      AMI: ami-04d4a07840a04301c
+
+Parameters:
+# KeyPair Parameter
+  KeyName:
+    Type: String
+    Description: Name of the KeyPair used for EC2 instances
+    ConstraintDescription: 'Must be the name of an existing EC2 KeyPair.'
+    Default: lab-key-pair
+
+# Naming Prefix
+  SecurityNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources
+    ConstraintDescription: 'String for naming.'
+    Default: Security
+
+# Management Network CIDR
+  RemoteManagementCIDR:
+    Description: >-
+      Remote Management CIDR to be allowed management access to VM-Series Firewall (e.g. 192.168.0.0/25)
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})
+    ConstraintDescription: Must be a valid CIDR (e.g. 0.0.0.0/0)
+
+  SourceS3BucketName:
+    Description: >-
+      Source bucket with bootstrap content intended to be used for Jam Session / AWS Events platform. Objects here will be be copied to new bucket in appropriate bootstrap structure
+    Type: String
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$|^$
+    ConstraintDescription: Must be a valid S3 Bucket name or left blank for no Bootstrap.
+    Default: __source_s3_bucket_name__
+
+  SourceS3BucketPath:
+    Type: String
+    Description: Name of the path in the S3 bucket where the bootstrap content is located. Should match the Jam Session ID
+    ConstraintDescription: 'Must match the Jam Session ID.'
+    Default: panw-vmseries-gwlb
+
+# ======================================================================================================================
+#   Metadata
+# ======================================================================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "VM-Series Deployment"
+        Parameters:
+          - VMSeriesAMI
+          - VMSeriesInstanceType
+          - SecurityNamePrefix
+          - KeyName
+          - SourceS3BucketName
+          - SourceS3BucketPath
+          - RemoteManagementCIDR
+
+    ParameterLabels:
+      VMSeriesAMI:
+        default: "AMI ID of VM-Series"
+      VMSeriesInstanceType:
+        default: "EC2 Instance Type for VM-Series"
+      RemoteManagementCIDR:
+        default: "IP CIDR for Allowed Remote Management of the VM-Series"
+      SecurityNamePrefix:
+        default: "Prefix to be used in naming resrouces in Security VPC"
+
+# ======================================================================================================================
+#   Resources
+# ======================================================================================================================
+
+Resources:
+
+# ----------------------------------------------------------------------------------------------------------------------
+#  Gateway Load Balancer Target Group
+# ----------------------------------------------------------------------------------------------------------------------
+
+  GWLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${SecurityNamePrefix}-VM-Series"
+      Port: 6081
+      Protocol: GENEVE
+      HealthCheckPort: 80
+      HealthCheckProtocol: TCP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 20
+      VpcId: !ImportValue SecurityVPC
+
+      TargetType: instance
+      Targets:
+        - Id: !Ref VMSeriesInstanceAZ1
+      Tags:
+        - Key: Name
+          Value: "GWLB VM-Series"
+
+  GWLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref GWLBTargetGroup
+      LoadBalancerArn: !ImportValue GWLB
+
+# ----------------------------------------------------------------------------------------------------------------------
+# VM-Series Bootstrap Resrouces
+# ----------------------------------------------------------------------------------------------------------------------
+
+  BootstrapRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: BootstrapRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 's3:ListBucket'
+                Resource: !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref SampleS3Bucket
+              - Effect: Allow
+                Action: 's3:GetObject'
+                Resource: !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref SampleS3Bucket
+                    - /*
+  BootstrapInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref BootstrapRole
+  AWSLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Effect: Allow
+                Resource: 'arn:aws:logs:*:*:*'
+            Version: 2012-10-17
+          PolicyName: !Sub '${AWS::Region}-AWSLambda-CW'
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                  - 's3:List*'
+                Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:s3:::${SampleS3Bucket}/*'
+                  - !Sub 'arn:aws:s3:::${SampleS3Bucket}'
+            Version: 2012-10-17
+          PolicyName: !Sub '${AWS::Region}-AWSLambda-S3'
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 's3:GetObject'
+                Effect: Allow
+                Resource:
+                  - !Sub 'arn:aws:s3:::${SourceS3BucketName}/*'
+            Version: 2012-10-17
+          PolicyName: !Sub '${AWS::Region}-AWSLambda-S3-Get'
+      RoleName: !Sub '${AWS::Region}-AWSLambdaExecutionRole'
+  SampleS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Select 
+        - '2'
+        - !Split 
+          - /
+          - !Ref 'AWS::StackId'
+
+  LambdaS3CustomResource:
+    Type: 'Custom::S3CustomResource'
+    DependsOn: AWSLambdaExecutionRole
+    Properties:
+      ServiceToken: !Ref AWSLambdaFunctionVersion
+      the_bucket: !Ref SampleS3Bucket
+      source_bucket: !Ref SourceS3BucketName
+      source_path: !Ref SourceS3BucketPath
+      FrontendGwlbeAz1: !ImportValue FrontendGwlbeAz1
+      dirs_to_create:
+        - config
+        - content
+        - license
+        - software
+
+
+  AWSLambdaFunctionVersion:
+    Type: 'AWS::Lambda::Version'
+    Properties:
+      FunctionName: !Ref AWSLambdaFunction
+
+  AWSLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Description: Create VM-Series bootstrap bucket from Jam source
+      FunctionName: !Sub '${AWS::Region}-lambda'
+      Handler: index.handler
+      Role: !GetAtt 
+        - AWSLambdaExecutionRole
+        - Arn
+      Timeout: 360
+      Runtime: python3.12
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import textwrap
+
+          def handler(event, context):
+              # Init ...
+              the_event = event['RequestType']
+              print("The event is: ", str(the_event))
+              response_data = {}
+              s_3 = boto3.client('s3')
+
+              # Retrieve parameters
+              the_bucket = event['ResourceProperties']['the_bucket']
+              dirs_to_create = event['ResourceProperties']['dirs_to_create']
+              source_bucket = event['ResourceProperties']['source_bucket']
+              source_path = event['ResourceProperties']['source_path']
+              frontend_gwlbe_az1 = event['ResourceProperties']['FrontendGwlbeAz1']
+
+              try:
+                  if the_event in ('Create', 'Update'):
+                      print("Requested folders: ", str(dirs_to_create))
+                      for dir_name in dirs_to_create:
+                          print("Creating: ", str(dir_name))
+                          s_3.put_object(Bucket=the_bucket,
+                                          Key=(dir_name
+                                              + '/'))
+                      s3_copy = boto3.resource('s3')
+
+                      # Create init-cfg.txt dynamically
+                      init_cfg_content = textwrap.dedent(f"""\
+                          type=dhcp-client
+                          hostname=BrewGuardian-NGFW
+                          ip-address=
+                          default-gateway=
+                          netmask=
+                          ipv6-default-gateway=
+                          vm-auth-key=
+                          panorama-server=
+                          panorama-server-2=
+                          tplname=
+                          dgname=
+                          dns-primary=8.8.8.8
+                          dns-secondary=8.8.4.4
+                          authcodes=
+                          plugin-op-commands=aws-gwlb-inspect:enable,aws-gwlb-overlay-routing:enable,aws-gwlb-associate-vpce:{frontend_gwlbe_az1}@ethernet1/1.1
+                          op-command-modes=jumbo-frame,mgmt-interface-swap
+                          op-cmd-dpdk-pkt-io=on
+                          dhcp-send-hostname=yes
+                          dhcp-send-client-id=yes
+                          dhcp-accept-server-hostname=no
+                          dhcp-accept-server-domain=yes
+                      """)
+                      s_3.put_object(Body=init_cfg_content, Bucket=the_bucket, Key='config/init-cfg.txt')
+
+                      copy_source = {
+                          'Bucket': source_bucket,
+                          'Key': source_path + '/bootstrap.xml'
+                      }
+                      s3_copy.meta.client.copy(copy_source, str(the_bucket), 'config/bootstrap.xml')
+                      copy_source = {
+                          'Bucket': source_bucket,
+                          'Key': source_path + '/authcodes'
+                      }
+                      s3_copy.meta.client.copy(copy_source, str(the_bucket), 'license/authcodes')
+                  elif the_event == 'Delete':
+                      print("Deleting S3 content...")
+                      b_operator = boto3.resource('s3')
+                      b_operator.Bucket(str(the_bucket)).objects.all().delete()
+                  # Everything OK... send the signal back
+                  print("Operation successful!")
+                  cfnresponse.send(event,
+                                  context,
+                                  cfnresponse.SUCCESS,
+                                  response_data)
+              except Exception as e:
+                  print("Operation failed...")
+                  print(str(e))
+                  response_data['Data'] = str(e)
+                  cfnresponse.send(event,
+                                  context,
+                                  cfnresponse.FAILED,
+                                  response_data)
+
+# ----------------------------------------------------------------------------------------------------------------------
+# VM-Series Deployment
+# ----------------------------------------------------------------------------------------------------------------------
+
+  VMSeriesManagementENIAZ1:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: VM-Series Management
+      GroupSet: [ !ImportValue VMSeriesManagementSecurityGroup ]
+      SubnetId: !ImportValue NATGWSubnetAZ1
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Management"
+
+  VMSeriesManagementEIPAZ1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Management"
+
+  VMSeriesManagementEIPAssociationAZ1:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt VMSeriesManagementEIPAZ1.AllocationId
+      NetworkInterfaceId: !Ref VMSeriesManagementENIAZ1
+
+  VMSeriesPublicENIAZ1:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: VM-Series Public
+      GroupSet: [ !ImportValue VMSeriesPublicSecurityGroup ]
+      SubnetId: !ImportValue NATGWSubnetAZ1
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Public"
+
+  VMSeriesPublicEIPAZ1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Public"
+
+  VMSeriesPublicEIPAssociationAZ1:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt VMSeriesPublicEIPAZ1.AllocationId
+      NetworkInterfaceId: !Ref VMSeriesPublicENIAZ1
+
+  VMSeriesDataENIAZ1:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: VM-Series GWLB Data - AZ1
+      SourceDestCheck: false
+      GroupSet: [ !ImportValue VMSeriesDataSecurityGroup ]
+      SubnetId: !ImportValue VMSeriesDataSubnetAZ1
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Data"
+  VMSeriesInstanceAZ1:
+    Type: AWS::EC2::Instance
+    UpdateReplacePolicy: Delete
+    Properties:
+      DisableApiTermination: false
+      InstanceInitiatedShutdownBehavior: stop
+      EbsOptimized: true
+      ImageId: !FindInMap
+        - PANFWRegionMap
+        - !Ref 'AWS::Region'
+        - AMI
+      InstanceType: m5.large
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: true
+            VolumeSize: 60
+            Encrypted: true
+      KeyName: !Ref KeyName
+      Monitoring: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series"
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref VMSeriesManagementENIAZ1
+          DeviceIndex: '1'
+        - NetworkInterfaceId: !Ref VMSeriesDataENIAZ1
+          DeviceIndex: '0'
+        - NetworkInterfaceId: !Ref VMSeriesPublicENIAZ1
+          DeviceIndex: '2'
+      IamInstanceProfile: !Ref BootstrapInstanceProfile
+      UserData:
+        Fn::Base64: 
+          Fn::Join:
+            - ';'
+            - - "mgmt-interface-swap=enable"
+              - !Sub "vmseries-bootstrap-aws-s3bucket=${SampleS3Bucket}"
+
+# ======================================================================================================================
+#   Outputs
+# ======================================================================================================================
+
+Outputs:
+
+  KeyName:
+    Description: The SSH KeyPair Name
+    Value: !Ref KeyName
