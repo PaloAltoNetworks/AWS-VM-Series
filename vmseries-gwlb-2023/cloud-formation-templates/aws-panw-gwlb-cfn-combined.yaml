@@ -1,0 +1,1152 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  Simulated VPC with public facing web frontend on EC2. Intended for use with demo scenario with VM-Series Deployment with AWS Gateway Load Balancer (GWLB).
+
+# ======================================================================================================================
+#   Parameters
+# ======================================================================================================================
+
+Parameters:
+# KeyPair Parameter
+  KeyName:
+    Type: String
+    Description: Name of the KeyPair used for EC2 instances
+    ConstraintDescription: 'Must be the name of an existing EC2 KeyPair.'
+    Default: lab-key-pair
+
+# Naming Prefix
+  FrontendNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources
+    ConstraintDescription: 'String for naming.'
+    Default: Beer Store Frontend
+
+  DataNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources
+    ConstraintDescription: 'String for naming.'
+    Default: Beer Store Data
+
+  AttackerNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources
+    ConstraintDescription: 'String for naming.'
+    Default: Sneaky Suds
+
+# Amazon Linux AMI for simulated workload EC2
+  LatestAmiId :
+    Type : 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+# Management Network CIDR
+  RemoteManagementCIDR:
+    Description: >-
+      Remote Management CIDR to be allowed management access to VM-Series Firewall (e.g. 192.168.0.0/25)
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})
+    ConstraintDescription: Must be a valid CIDR (e.g. 0.0.0.0/0)
+
+# Frontend VPC CIDR IP Range
+  FrontendVPCCIDR:
+    Description: >-
+      CIDR Address Range for FrontendVPC (e.g. 10.1.0.0/16)
+    Type: String
+    Default: 10.1.0.0/16
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+# Frontend VPC Subnets
+  FrontendVPCSubnetPrivateCIDRAZ1:
+    Description: >-
+      CIDR for Private Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.1.1.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  FrontendVPCSubnetPublicCIDRAZ1:
+    Description: >-
+      CIDR for Public Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.1.2.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  FrontendVPCSubnetGwlbeCIDRAZ1:
+    Description: >-
+      CIDR for GWLB Endpoint Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.1.3.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+# DATA  
+# Data VPC CIDR IP Range
+  DataVPCCIDR:
+    Description: >-
+      CIDR Address Range for DataVPC (e.g. 10.2.0.0/16)
+    Type: String
+    Default: 10.2.0.0/16
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+# Data VPC Subnets
+  DataVPCSubnetPrivateCIDRAZ1:
+    Description: >-
+      CIDR for Data VM Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.2.1.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  DataVPCSubnetPublicCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.2.2.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+# ATTACKER
+# Attacker VPC CIDR IP Range
+  AttackerVPCCIDR:
+    Description: >-
+      CIDR Address Range for AttackerVPC (e.g. 10.2.0.0/16)
+    Type: String
+    Default: 192.168.10.0/23
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+# Attacker VPC Subnets
+  AttackerVPCSubnetPrivateCIDRAZ1:
+    Description: >-
+      CIDR for Attacker VM Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 192.168.10.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  AttackerVPCSubnetPublicCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 192.168.11.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+# ======================================================================================================================
+#   Metadata
+# ======================================================================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Frontend Webserver VPC Parameters"
+        Parameters:
+          - FrontendVPCCIDR
+          - FrontendVPCSubnetPrivateCIDRAZ1
+          - FrontendVPCSubnetPublicCIDRAZ1
+          - FrontendVPCSubnetGwlbeCIDRAZ1
+          - FrontendNamePrefix
+          - DataVPCCIDR
+          - DataVPCSubnetPrivateCIDRAZ1
+          - DataVPCSubnetPublicCIDRAZ1
+          - DataNamePrefix
+          - AttackerVPCCIDR
+          - AttackerVPCSubnetPrivateCIDRAZ1
+          - AttackerVPCSubnetPublicCIDRAZ1
+          - AttackerNamePrefix
+      -
+        Label:
+          default: "Other Parameters"
+        Parameters:
+          - RemoteManagementCIDR
+
+# ======================================================================================================================
+#   Resources
+# ======================================================================================================================
+
+Resources:
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Networking - VPC, IGW, TGW, Subnets, Route Tables
+# ----------------------------------------------------------------------------------------------------------------------
+
+  FrontendVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !Ref FrontendVPCCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} VPC"
+
+  FrontendIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} IGW"
+
+  FrontendIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref FrontendIGW
+      VpcId: !Ref FrontendVPC
+
+  FrontendSubnetPrivateAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref FrontendVPC
+      CidrBlock: !Ref FrontendVPCSubnetPrivateCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} Private"
+
+  FrontendSubnetPublicAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref FrontendVPC
+      CidrBlock: !Ref FrontendVPCSubnetPublicCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} Public"
+
+  FrontendSubnetGwlbeAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref FrontendVPC
+      CidrBlock: !Ref FrontendVPCSubnetGwlbeCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} GWLB Endpoint"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# TGW Attachment
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+  FrontendTgwAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !ImportValue TgwId
+      VpcId: !Ref FrontendVPC
+      SubnetIds: [!Ref FrontendSubnetPrivateAZ1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} VPC Attachment"
+
+  FrontendTGWAttachmentAssociation:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties: 
+      TransitGatewayAttachmentId: !Ref FrontendTgwAttachment
+      TransitGatewayRouteTableId: !ImportValue TgwSpokeRouteTableId
+
+  FrontendTGWAttachmentPropagationToSecurity:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties: 
+      TransitGatewayAttachmentId: !Ref FrontendTgwAttachment
+      TransitGatewayRouteTableId: !ImportValue TgwSecurityRouteTableId
+
+  FrontendTGWAttachmentPropagationToSpoke: # Intentional to start with direct E/W Traffic
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties: 
+      TransitGatewayAttachmentId: !Ref FrontendTgwAttachment
+      TransitGatewayRouteTableId: !ImportValue TgwSpokeRouteTableId
+
+# ----------------------------------------------------------------------------------------------------------------------
+# VPC Route Tables
+# ----------------------------------------------------------------------------------------------------------------------
+
+  FrontendPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref FrontendVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} Private"
+
+  FrontendPrivateRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref FrontendPrivateRouteTable
+      SubnetId: !Ref FrontendSubnetPrivateAZ1
+
+  FrontendPrivateClassARoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref FrontendPrivateRouteTable
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !ImportValue TgwId
+    DependsOn: FrontendTgwAttachment
+
+  FrontendPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref FrontendVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} Public"
+
+  FrontendPublicRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref FrontendPublicRouteTable
+      SubnetId: !Ref FrontendSubnetPublicAZ1
+
+  FrontendPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: FrontendIGWAttachment
+    Properties:
+      RouteTableId: !Ref FrontendPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref FrontendIGW
+
+  FrontendPublicClassARoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref FrontendPublicRouteTable
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !ImportValue TgwId
+    DependsOn: FrontendTgwAttachment
+
+  FrontendGwlbEndpointRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref FrontendVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} GWLB Endpoint"
+
+  FrontendGwlbEndpointRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref FrontendGwlbEndpointRouteTable
+      SubnetId: !Ref FrontendSubnetGwlbeAZ1
+
+  FrontendGwlbEndpointDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: FrontendIGWAttachment
+    Properties:
+      RouteTableId: !Ref FrontendGwlbEndpointRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref FrontendIGW
+
+  FrontendIgwEdgeRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref FrontendVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} IGW Edge"
+
+  FrontendIgwEdgeRouteTableAssociationAZ1:
+    Type: AWS::EC2::GatewayRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref FrontendIgwEdgeRouteTable
+      GatewayId: !Ref FrontendIGW
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Gateway Load Balancer Endpoint
+# ----------------------------------------------------------------------------------------------------------------------
+
+  FrontendGwlbeAz1:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref FrontendVPC
+      ServiceName: !ImportValue GWLBServiceId
+      VpcEndpointType: GatewayLoadBalancer
+      SubnetIds: [ !Ref FrontendSubnetGwlbeAZ1 ]
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Frontend EC2 Instance Resources
+# ----------------------------------------------------------------------------------------------------------------------
+
+  FrontendEC2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: FrontendIGWAttachment
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref FrontendEC2Instance
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} Webserver EIP"
+
+  FrontendEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${FrontendNamePrefix} Public"
+      GroupDescription: Security group for FrontendEC2Instance
+      VpcId: !Ref FrontendVPC
+      SecurityGroupIngress:
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.0.0.0/8
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} Public"
+
+
+  FrontendEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: FrontendIGWAttachment
+    Properties:
+      ImageId: !Ref LatestAmiId  # Enter the appropriate AMI ID
+      InstanceType: t2.micro  # Enter the desired instance type
+      KeyName: !Ref KeyName  #!Join ['', [!FindInMap [KeyPairMap, qwikLABS, KeyNamePrefix], !Ref 'AWS::AccountId']]
+      IamInstanceProfile: !Ref FrontendSsmInstanceProfile
+      NetworkInterfaces:
+        - PrivateIpAddress: 10.1.2.223
+          SubnetId: !Ref FrontendSubnetPublicAZ1
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref FrontendEC2SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            Encrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} Webserver"
+      UserData: 
+        Fn::Base64: |
+          #!/bin/bash
+          # Install Docker (if not already installed)
+          sudo yum update -y
+          sudo amazon-linux-extras install docker -y
+          sudo service docker start
+          sudo usermod -aG docker ec2-user  # Add the user to the docker group for non-root access (optional)
+          
+          # Pull and run your Docker container
+          sudo docker pull migara/vuln-app
+          sudo docker run -d -p 80:8080 migara/vuln-app
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Frontend VPC - SSM Resources
+# ----------------------------------------------------------------------------------------------------------------------
+
+  # SSM VPC Endpoint
+  FrontendSsmVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref FrontendVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref FrontendSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref FrontendSsmSecurityGroup
+
+  FrontendSsmMessagesVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref FrontendVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref FrontendSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref FrontendSsmSecurityGroup
+
+  FrontendEc2MessagesVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref FrontendVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref FrontendSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref FrontendSsmSecurityGroup
+
+  # SSM Security Group
+
+  FrontendSsmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${FrontendNamePrefix} SSM Endpoint"
+      GroupDescription: Enable SSM traffic to endpoint
+      VpcId: !Ref FrontendVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref FrontendVPCCIDR
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${FrontendNamePrefix} SSM Endpoint"
+
+  # SSM Role for EC2 instances
+  FrontendSsmInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Tags:
+          - Key: Name
+            Value: !Sub "${FrontendNamePrefix} SSM"
+
+  # EC2 Instance Profile
+  FrontendSsmInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref FrontendSsmInstanceRole
+
+#########################################################################################################################
+# ----------------------------------------------------------------------------------------------------------------------
+# Networking - VPC, IGW, TGW, Subnets, Route Tables
+# ----------------------------------------------------------------------------------------------------------------------
+
+  DataVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref DataVPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} VPC"
+
+  DataIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} IGW"
+
+  DataIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref DataIGW
+      VpcId: !Ref DataVPC
+
+  DataSubnetPrivateAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DataVPC
+      CidrBlock: !Ref DataVPCSubnetPrivateCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} Private AZ1"
+
+  DataSubnetPublicAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DataVPC
+      CidrBlock: !Ref DataVPCSubnetPublicCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} Public AZ1"
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# TGW Attachment
+# ----------------------------------------------------------------------------------------------------------------------
+
+  DataTgwAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !ImportValue TgwId
+      VpcId: !Ref DataVPC
+      SubnetIds: [!Ref DataSubnetPrivateAZ1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} VPC Attachment"
+
+  DataTGWAttachmentAssociation:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties: 
+      TransitGatewayAttachmentId: !Ref DataTgwAttachment
+      TransitGatewayRouteTableId: !ImportValue TgwSpokeRouteTableId
+
+  DataTGWAttachmentPropagationToSecurity:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties: 
+      TransitGatewayAttachmentId: !Ref DataTgwAttachment
+      TransitGatewayRouteTableId: !ImportValue TgwSecurityRouteTableId
+
+  DataTGWAttachmentPropagationToSpoke: # Intentional to start with direct E/W Traffic
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties: 
+      TransitGatewayAttachmentId: !Ref DataTgwAttachment
+      TransitGatewayRouteTableId: !ImportValue TgwSpokeRouteTableId
+
+# ----------------------------------------------------------------------------------------------------------------------
+# EIPs
+# ----------------------------------------------------------------------------------------------------------------------
+
+  DataEIPAZ1:
+    Type: AWS::EC2::EIP
+    DependsOn: DataIGWAttachment
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref DataEC2Instance
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} Beer Store Data EIP"
+
+  # DataNATGWAZ1:
+  #   Type: AWS::EC2::NatGateway
+  #   Properties:
+  #     SubnetId: !Ref DataSubnetPublicAZ1
+  #     AllocationId: !GetAtt DataNATGWEIPAZ1.AllocationId
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub "${DataNamePrefix} NAT GW"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# VPC Route Tables
+# ----------------------------------------------------------------------------------------------------------------------
+
+  DataPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DataVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} Private"
+
+  DataPrivateRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DataPrivateRouteTable
+      SubnetId: !Ref DataSubnetPrivateAZ1
+
+  DataPrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DataPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref DataIGW
+
+  DataPrivateClassARoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DataPrivateRouteTable
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !ImportValue TgwId
+    DependsOn: DataTgwAttachment
+
+  DataPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DataVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} Public"
+
+  DataPublicRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DataPublicRouteTable
+      SubnetId: !Ref DataSubnetPublicAZ1
+
+  DataPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: DataIGWAttachment
+    Properties:
+      RouteTableId: !Ref DataPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref DataIGW
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Data EC2 Instance Resources
+# ----------------------------------------------------------------------------------------------------------------------
+
+  DataEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${DataNamePrefix} Database"
+      GroupDescription: Security group for Private DB
+      VpcId: !Ref DataVPC
+      SecurityGroupIngress:
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.0.0.0/8
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 10.0.0.0/8
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} Database"
+
+  DataEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: DataIGWAttachment
+    Properties:
+      ImageId: !Ref LatestAmiId  # Enter the appropriate AMI ID
+      InstanceType: t2.micro  # Enter the desired instance type
+      KeyName: !Ref KeyName  #!Join ['', [!FindInMap [KeyPairMap, qwikLABS, KeyNamePrefix], !Ref 'AWS::AccountId']]
+      IamInstanceProfile: !Ref DataSsmInstanceProfile
+      NetworkInterfaces:
+        - PrivateIpAddress: 10.2.1.100 # Enter the desired private IP address
+          SubnetId: !Ref DataSubnetPrivateAZ1
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref DataEC2SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            Encrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} Database"
+      UserData: 
+        Fn::Base64: |
+          #!/bin/bash
+          # Install Docker (if not already installed)
+          sudo yum update -y
+          sudo amazon-linux-extras install docker -y
+          sudo service docker start
+          sudo usermod -aG docker ec2-user  # Add the user to the docker group for non-root access (optional)
+          
+          # Pull and run your Docker container
+          sudo docker pull migara/beer-vault
+          sudo docker run -d -p 2222:22 migara/beer-vault
+# ----------------------------------------------------------------------------------------------------------------------
+# Data VPC - SSM Resources
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+  # SSM VPC Endpoint
+  DataSsmVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref DataVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref DataSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref DataSsmSecurityGroup
+
+  DataSsmMessagesVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref DataVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref DataSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref DataSsmSecurityGroup
+
+  DataEc2MessagesVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref DataVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref DataSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref DataSsmSecurityGroup
+
+  # Security Group
+  DataSsmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${DataNamePrefix}-ssmendpoint-sg"
+      VpcId: !Ref DataVPC
+      GroupDescription: Enable SSM traffic to endpoint
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref DataVPCCIDR
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} SSM"
+
+  # SSM Role for EC2 instances
+  DataSsmInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Tags:
+        - Key: Name
+          Value: !Sub "${DataNamePrefix} SSM"
+
+  # EC2 Instance Profile
+  DataSsmInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref DataSsmInstanceRole
+
+#########################################################################################################################
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Networking - VPC, IGW, TGW, Subnets, Route Tables
+# ----------------------------------------------------------------------------------------------------------------------
+
+  AttackerVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref AttackerVPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} VPC"
+
+  AttackerIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} IGW"
+
+  AttackerIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref AttackerIGW
+      VpcId: !Ref AttackerVPC
+
+  AttackerSubnetPrivateAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AttackerVPC
+      CidrBlock: !Ref AttackerVPCSubnetPrivateCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} Private AZ1"
+
+  AttackerSubnetPublicAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AttackerVPC
+      CidrBlock: !Ref AttackerVPCSubnetPublicCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} Public AZ1"
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# NAT Gateways with EIPs
+# ----------------------------------------------------------------------------------------------------------------------
+
+  # AttackerNATGWEIPAZ1:
+  #   Type: AWS::EC2::EIP
+  #   DependsOn: AttackerIGWAttachment
+  #   Properties:
+  #     Domain: vpc
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub "${AttackerNamePrefix} EIP"
+          
+  AttackerEC2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttackerIGWAttachment
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref AttackerEC2Instance
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} EIP"
+
+  # AttackerNATGWAZ1:
+  #   Type: AWS::EC2::NatGateway
+  #   Properties:
+  #     SubnetId: !Ref AttackerSubnetPublicAZ1
+  #     AllocationId: !GetAtt AttackerNATGWEIPAZ1.AllocationId
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub "${AttackerNamePrefix} NAT GW"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# VPC Route Tables
+# ----------------------------------------------------------------------------------------------------------------------
+
+  AttackerPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AttackerVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} Private"
+
+  AttackerPrivateRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AttackerPrivateRouteTable
+      SubnetId: !Ref AttackerSubnetPrivateAZ1
+
+  AttackerPrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AttackerPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref AttackerIGW
+
+  AttackerPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AttackerVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} Public"
+
+  AttackerPublicRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AttackerPublicRouteTable
+      SubnetId: !Ref AttackerSubnetPublicAZ1
+
+  AttackerPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttackerIGWAttachment
+    Properties:
+      RouteTableId: !Ref AttackerPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref AttackerIGW
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Attacker EC2 Instance Resources
+# ----------------------------------------------------------------------------------------------------------------------
+
+  AttackerEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${AttackerNamePrefix}-SG"
+      GroupDescription: Security group for Attacker
+      VpcId: !Ref AttackerVPC
+      SecurityGroupIngress:
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} SG"
+
+  AttackerEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: AttackerIGWAttachment
+    Properties:
+      ImageId: !Ref LatestAmiId  # Enter the appropriate AMI ID
+      InstanceType: t2.micro  # Enter the desired instance type
+      KeyName: !Ref KeyName  #!Join ['', [!FindInMap [KeyPairMap, qwikLABS, KeyNamePrefix], !Ref 'AWS::AccountId']]
+      IamInstanceProfile: !Ref AttackerSsmInstanceProfile
+      NetworkInterfaces:
+        - PrivateIpAddress: 192.168.10.10 # Enter the desired private IP address
+          SubnetId: !Ref AttackerSubnetPrivateAZ1
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref AttackerEC2SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            Encrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} Instance"
+      UserData:
+        Fn::Base64: !Sub 
+          - |
+            #!/bin/bash
+            # Install Docker (if not already installed)
+            sudo yum update -y
+            sudo amazon-linux-extras install docker -y
+            sudo service docker start
+            sudo usermod -aG docker ec2-user  # Add the user to the docker group for non-root access (optional)
+            
+            EIP_PUBLIC_IP=${EIP_PUBLIC_IP}
+            
+            # Pull and run your Docker container
+            sudo docker pull migara/att-svr
+            docker container run -itd --rm --name att-svr -p 8888:8888 -p 1389:1389 -e HOST=${EIP_PUBLIC_IP} -e BEER_STORE_EIP=${FrontendEC2EIP} migara/att-svr
+          - 
+            # FrontendEIP:
+            #   'Fn::ImportValue': 'FrontendEIP'
+            EIP_PUBLIC_IP: "$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+            
+
+          
+# ----------------------------------------------------------------------------------------------------------------------
+# Attacker VPC - SSM Resources
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+  # SSM VPC Endpoint
+  AttackerSsmVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref AttackerVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref AttackerSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref AttackerSsmSecurityGroup
+
+  AttackerSsmMessagesVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref AttackerVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssmmessages"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref AttackerSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref AttackerSsmSecurityGroup
+
+  AttackerEc2MessagesVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref AttackerVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ec2messages"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref AttackerSubnetPrivateAZ1
+      SecurityGroupIds:
+        - !Ref AttackerSsmSecurityGroup
+
+  # Security Group
+  AttackerSsmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${AttackerNamePrefix}-ssmendpoint-sg"
+      VpcId: !Ref AttackerVPC
+      GroupDescription: Enable SSM traffic to endpoint
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AttackerVPCCIDR
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} SSM"
+
+  # SSM Role for EC2 instances
+  AttackerSsmInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Tags:
+        - Key: Name
+          Value: !Sub "${AttackerNamePrefix} SSM"
+
+  # EC2 Instance Profile
+  AttackerSsmInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref AttackerSsmInstanceRole
+
+
+
+# ======================================================================================================================
+#   Outputs
+# ======================================================================================================================
+
+Outputs:
+  FrontendGwlbeAz1:
+    Description: "The ID of the FrontendGwlbeAz1 VPCEndpoint"
+    Value: !Ref FrontendGwlbeAz1
+    Export:
+      Name: "FrontendGwlbeAz1"
+  
+  FrontendEIP:
+    Description: EIP of the Beerstore
+    Value: !GetAtt FrontendEC2EIP.PublicIp
+    Export:
+      Name: FrontendEIP
+  
+  AttackerEC2InstancePublicIP:
+    Value: !GetAtt AttackerEC2Instance.PublicIp
+    Description: Public IP address of AttackerEC2Instance
