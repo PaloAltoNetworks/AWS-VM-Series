@@ -1,0 +1,706 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  Shared Infrastructure and Security VPC with Gateway Load Balancer. VM-Series resources moved to separate stack due to circular dependency with bootstrap using GWLB endpoints from spokes
+
+# ======================================================================================================================
+#   Parameters / Maapings
+# ======================================================================================================================
+
+# Updated to 11.0.2-h1 Custom AMIs
+Mappings:
+  PANFWRegionMap:
+    eu-north-1:
+      AMI: ami-04527e8b09f7eb406
+    eu-west-1:
+      AMI: ami-0a44de9db9dd95a6c
+    us-east-1:
+      AMI: ami-06899917ae226f293
+    us-east-2:
+      AMI: ami-0fd909759c03f961d
+    us-west-1:
+      AMI: ami-09dd60214faaafc71
+    us-west-2:
+      AMI: ami-04d4a07840a04301c
+
+Parameters:
+# KeyPair Parameter
+  KeyName:
+    Type: String
+    Description: Name of the KeyPair used for EC2 instances
+    ConstraintDescription: 'Must be the name of an existing EC2 KeyPair.'
+    Default: lab-key-pair
+
+# Naming Prefix
+  SecurityNamePrefix:
+    Type: String
+    Description: Prefix to be used for naming / tagging resources
+    ConstraintDescription: 'String for naming.'
+    Default: Security
+
+# Management Network CIDR
+  RemoteManagementCIDR:
+    Description: >-
+      Remote Management CIDR to be allowed management access to VM-Series Firewall (e.g. 192.168.0.0/25)
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})
+    ConstraintDescription: Must be a valid CIDR (e.g. 0.0.0.0/0)
+
+# Security VPC CIDR IP Range
+  SecurityVPCCIDR:
+    Description: >-
+      CIDR Address Range for SecurityVPC (e.g. 10.0.0.0/24)
+    Type: String
+    Default: 10.0.0.0/24
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/25)
+
+  # AZ1 Subnets CIDRs
+
+  SecurityVPCNATGWSubnetCIDRAZ1:
+    Description: >-
+      CIDR for NAT Gateway Subnet (e.g. 10.0.0.0/28)
+    Type: String
+    Default: 10.0.0.0/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SecurityVPCGWLBESubnetCIDRAZ1:
+    Description: >-
+      CIDR for GWLBE Subnet (e.g. 10.0.0.16/28)
+    Type: String
+    Default: 10.0.0.16/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SecurityVPCTGWSubnetCIDRAZ1:
+    Description: >-
+      CIDR for TGW Subnet (e.g. 10.0.0.32/28)
+    Type: String
+    Default: 10.0.0.32/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SecurityVPCVMSeriesDataSubnetCIDRAZ1:
+    Description: >-
+      CIDR for VMSeries Data Subnet (e.g. 10.0.0.48/28)
+    Type: String
+    Default: 10.0.0.48/28
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: Must be in a CIDR (e.g. 192.168.0.0/28)
+
+  SourceS3BucketName:
+    Description: >-
+      Source bucket with bootstrap content intended to be used for Jam Session / AWS Events platform. Objects here will be be copied to new bucket in appropriate bootstrap structure
+    Type: String
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$|^$
+    ConstraintDescription: Must be a valid S3 Bucket name or left blank for no Bootstrap.
+    Default: __source_s3_bucket_name__
+
+  SourceS3BucketPath:
+    Type: String
+    Description: Name of the path in the S3 bucket where the bootstrap content is located. Should match the Jam Session ID
+    ConstraintDescription: 'Must match the Jam Session ID.'
+    Default: panw-vmseries-gwlb
+
+# ======================================================================================================================
+#   Metadata
+# ======================================================================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Security VPC"
+        Parameters:
+          - SecurityVPCCIDR
+          - SecurityVPCNATGWSubnetCIDRAZ1
+          - SecurityVPCGWLBESubnetCIDRAZ1
+          - SecurityVPCTGWSubnetCIDRAZ1
+          - SecurityVPCVMSeriesDataSubnetCIDRAZ1
+          - SecurityNamePrefix
+
+      -
+        Label:
+          default: "VM-Series Deployment"
+        Parameters:
+          - VMSeriesAMI
+          - VMSeriesInstanceType
+          - KeyName
+          - SourceS3BucketName
+          - SourceS3BucketPath
+
+      -
+        Label:
+          default: "Other Parameters"
+        Parameters:
+          - RemoteManagementCIDR
+
+    ParameterLabels:
+      SecurityVPCCIDR:
+        default: "IP CIDR for the Security VPC"
+      SecurityVPCNATGWSubnetCIDRAZ1:
+        default: "IP CIDR for NAT GW Subnet in AZ1"
+      SecurityVPCGWLBESubnetCIDRAZ1:
+        default: "IP CIDR for GWLB Endpoint in AZ1"
+      SecurityVPCTGWSubnetCIDRAZ1:
+        default: "IP CIDR for TGW Attachment in AZ1"
+      SecurityVPCVMSeriesDataSubnetCIDRAZ1:
+        default: "IP CIDR for VM-Series Data Plane Interface in AZ1"
+      VMSeriesAMI:
+        default: "AMI ID of VM-Series"
+      VMSeriesInstanceType:
+        default: "EC2 Instance Type for VM-Series"
+      RemoteManagementCIDR:
+        default: "IP CIDR for Allowed Remote Management of the VM-Series"
+      SecurityNamePrefix:
+        default: "Prefix to be used in naming resrouces in Security VPC"
+
+# ======================================================================================================================
+#   Resources
+# ======================================================================================================================
+
+Resources:
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Transit Gateway and Attachment to Security VPC
+# ----------------------------------------------------------------------------------------------------------------------
+
+## TODO add defaults associations for spokes (circular dependency, needs lambda)
+  TransitGateway:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Description: Transit Gateway for VPC connectivity
+      DefaultRouteTableAssociation: disable
+      DefaultRouteTablePropagation: disable
+      Tags:
+          - Key: Name
+            Value: Transit Gateway
+
+  TGWSpokeRouteTable:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      Tags:
+          - Key: Name
+            Value: Spoke TGW Route Table
+      TransitGatewayId: !Ref TransitGateway
+
+  TGWSecurityRouteTable:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      Tags:
+          - Key: Name
+            Value: Security TGW Route Table
+      TransitGatewayId: !Ref TransitGateway
+
+  TGWSecurityAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      VpcId: !Ref SecurityVPC
+      SubnetIds: [!Ref TGWSubnetAZ1]
+      TransitGatewayId: !Ref TransitGateway
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VPC Attachment"
+
+  TGWSecurityAttachmentAssociation:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties: 
+      TransitGatewayAttachmentId: !Ref TGWSecurityAttachment
+      TransitGatewayRouteTableId: !Ref TGWSecurityRouteTable
+
+  TGWSpokeRouteTableDefaultRoute:
+      Type: AWS::EC2::TransitGatewayRoute
+      Properties: 
+        DestinationCidrBlock: 0.0.0.0/0
+        TransitGatewayAttachmentId: !Ref TGWSecurityAttachment
+        TransitGatewayRouteTableId: !Ref TGWSpokeRouteTable
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# VPC, IGW, and IGW Attachment
+# ----------------------------------------------------------------------------------------------------------------------
+
+  SecurityVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref SecurityVPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VPC"
+
+  SecurityIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} IGW"
+
+  SecurityIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref SecurityIGW
+      VpcId: !Ref SecurityVPC
+
+
+#-----------------------------------------------------------------------------------------------------------------------
+# Subnets
+#-----------------------------------------------------------------------------------------------------------------------
+
+
+#Security
+  NATGWSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SecurityVPC
+      CidrBlock: !Ref SecurityVPCNATGWSubnetCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} Public"
+
+  TGWSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SecurityVPC
+      CidrBlock: !Ref SecurityVPCTGWSubnetCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} TGW Attach"
+
+  GWLBESubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SecurityVPC
+      CidrBlock: !Ref SecurityVPCGWLBESubnetCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} GWLB Endpoint"
+
+  VMSeriesDataSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SecurityVPC
+      CidrBlock: !Ref SecurityVPCVMSeriesDataSubnetCIDRAZ1
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} Firewall Data"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Route Tables - SecurityVPC - GWLBE
+# ----------------------------------------------------------------------------------------------------------------------
+
+  GWLBERouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SecurityVPC
+      Tags:
+        - Key : Name
+          Value: !Sub "${SecurityNamePrefix} GWLB Endpoint"
+
+  # GWLBEDefaultRouteAZ1:
+  #   Type: AWS::EC2::Route
+  #   Properties:
+  #     RouteTableId: !Ref GWLBERouteTableAZ1
+  #     DestinationCidrBlock: 0.0.0.0/0
+  #     NatGatewayId: !Ref SecurityIGW
+
+  GWLBERouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref GWLBERouteTableAZ1
+      SubnetId: !Ref GWLBESubnetAZ1
+
+  GWLBEClassARouteAZ1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref GWLBERouteTableAZ1
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref TransitGateway
+    DependsOn: TGWSecurityAttachment
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Route Tables - SecurityVPC - Nat Gateway
+# ----------------------------------------------------------------------------------------------------------------------
+
+  NATGWRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SecurityVPC
+      Tags:
+        - Key : Name
+          Value: !Sub "${SecurityNamePrefix} Public"
+
+  NATGWDefaultRouteAZ1:
+    Type: AWS::EC2::Route
+    DependsOn: SecurityIGWAttachment
+    Properties:
+      RouteTableId: !Ref NATGWRouteTableAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SecurityIGW
+
+  NATGWClassARouteAZ1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref NATGWRouteTableAZ1
+      DestinationCidrBlock: 10.0.0.0/8
+      VpcEndpointId: !Ref GWLBEAZ1
+
+  NATGWRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref NATGWRouteTableAZ1
+      SubnetId: !Ref NATGWSubnetAZ1
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Route Table - SecurityVPC - TGW
+# ----------------------------------------------------------------------------------------------------------------------
+
+  TGWRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SecurityVPC
+      Tags:
+        - Key : Name
+          Value: !Sub "${SecurityNamePrefix} TGW Attach"
+
+  TGWDefaultRouteAZ1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref TGWRouteTableAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      VpcEndpointId: !Ref GWLBEAZ1
+
+  TGWRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TGWRouteTableAZ1
+      SubnetId: !Ref TGWSubnetAZ1
+
+# ----------------------------------------------------------------------------------------------------------------------
+# SecurityVPC - NAT Gateways with EIPs
+# ----------------------------------------------------------------------------------------------------------------------
+
+  # NATGWEIPAZ1:
+  #   Type: AWS::EC2::EIP
+  #   DependsOn: SecurityIGWAttachment
+  #   Properties:
+  #     Domain: vpc
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub "${SecurityNamePrefix} NAT GW"
+
+  # NATGWAZ1:
+  #   Type: AWS::EC2::NatGateway
+  #   Properties:
+  #     SubnetId: !Ref NATGWSubnetAZ1
+  #     AllocationId: !GetAtt NATGWEIPAZ1.AllocationId
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub "${SecurityNamePrefix} NAT GW"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Route Table - SecurityVPC - Data
+# ----------------------------------------------------------------------------------------------------------------------
+
+  VMSeriesDataRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SecurityVPC
+      Tags:
+        - Key : Name
+          Value: !Sub "${SecurityNamePrefix} Firewall Data"
+
+  VMSeriesDataRouteTableAssociationAZ1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VMSeriesDataRouteTableAZ1
+      SubnetId: !Ref VMSeriesDataSubnetAZ1
+
+# ----------------------------------------------------------------------------------------------------------------------
+#  Gateway Load Balancer
+# ----------------------------------------------------------------------------------------------------------------------
+
+  GWLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: VMSeries-Gateway-Load-Balancer
+      Type: gateway
+      Subnets: [!Ref VMSeriesDataSubnetAZ1]
+      LoadBalancerAttributes:
+        - Key: load_balancing.cross_zone.enabled
+          Value: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} Gateway Load Balancer"
+
+  # ----------------------------------------------------------------------------------------------------------------------
+  #  Gateway Load Balancer - VPC Endpoint Service
+  # ----------------------------------------------------------------------------------------------------------------------
+
+  GWLBEService:
+    Type: AWS::EC2::VPCEndpointService
+    Properties:
+      GatewayLoadBalancerArns:
+        - !Ref GWLB
+      AcceptanceRequired: false
+
+  DescribeGWLBEServiceLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcEndpointServiceConfigurations
+                  - ec2:DescribeVpcEndpointServicePermissions
+                  - ec2:DescribeVpcEndpointServices
+                Resource: "*"
+
+  DescribeGWLBEService:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.handler"
+      Role: !GetAtt
+        - DescribeGWLBEServiceLambdaExecutionRole
+        - Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          import logging
+          import time
+          def handler(event, context):
+            logger = logging.getLogger()
+            logger.setLevel(logging.INFO)
+            responseData = {}
+            responseStatus = cfnresponse.FAILED
+            logger.info('Received event: {}'.format(json.dumps(event)))
+            
+            if event["RequestType"] == "Delete":
+                responseStatus = cfnresponse.SUCCESS
+                cfnresponse.send(event, context, responseStatus, responseData)
+            
+            if event["RequestType"] == "Create":
+                try:
+                    VpceServiceId = event["ResourceProperties"]["Input"]
+                except Exception as e:
+                    logger.info('VPC Endpoint Service Id retrieval failure: {}'.format(e))
+                    return
+                
+                try:
+                    ec2 = boto3.client('ec2')
+                except Exception as e:
+                    logger.info('boto3.client failure: {}'.format(e))
+                    return
+                
+                start_time = time.time()
+                elapsed_time = 0
+                
+                while elapsed_time < 890:  # Check every minute for up to 10 minutes, default 570
+                    try:
+                        response = ec2.describe_vpc_endpoint_service_configurations(
+                            Filters=[
+                                {
+                                    'Name': 'service-id',
+                                    'Values': [VpceServiceId]
+                                }
+                            ]
+                        )
+                    except Exception as e:
+                        logger.info('ec2.describe_vpc_endpoint_service_configurations failure: {}'.format(e))
+                        time.sleep(10)  # Sleep for one minute before retrying
+                        elapsed_time = time.time() - start_time
+                        continue
+                    
+                    ServiceName = response['ServiceConfigurations'][0]['ServiceName']
+                    logger.info('service name: {}'.format(ServiceName))
+                    responseData['Data'] = ServiceName
+                    responseStatus = cfnresponse.SUCCESS
+                    cfnresponse.send(event, context, responseStatus, responseData)
+                    return
+                
+                # If we reach this point, it means 10 minutes have passed without success
+                logger.info('Timed out after 10 minutes')
+                responseStatus = cfnresponse.FAILED
+                responseData['Error'] = 'Timed out after 10 minutes'
+                cfnresponse.send(event, context, responseStatus, responseData)
+      Runtime: python3.12
+      Timeout: 900 #default 900 line 526 =570 before
+
+  GWLBESerivceName:
+    Type: Custom::DescribeVpcEndpointServiceConfigurations
+    Properties:
+      ServiceToken: !GetAtt DescribeGWLBEService.Arn
+      Input: !Ref GWLBEService
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Security VPC - Gateway Load Balancer Endpoint
+# ----------------------------------------------------------------------------------------------------------------------
+
+  GWLBEAZ1:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref SecurityVPC
+      ServiceName: !GetAtt GWLBESerivceName.Data
+      VpcEndpointType: GatewayLoadBalancer
+      SubnetIds: [ !Ref GWLBESubnetAZ1 ]
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Security VPC - Management & Data Security Group
+# ----------------------------------------------------------------------------------------------------------------------
+
+  VMSeriesManagementSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref SecurityVPC
+      GroupName: !Sub "${SecurityNamePrefix}-VM-Series-Management"
+      GroupDescription: VM-Series Management Security Group
+      SecurityGroupIngress:
+        - CidrIp: !Ref RemoteManagementCIDR
+          FromPort: 22
+          ToPort: 22
+          IpProtocol: tcp
+        - CidrIp: !Ref RemoteManagementCIDR
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: tcp
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Management"
+
+  VMSeriesDataSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref SecurityVPC
+      GroupName: !Sub "${SecurityNamePrefix}-VM-Series-Data"
+      GroupDescription: VM-Series GWLB Management Security Group
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: 6081
+          ToPort: 6081
+          CidrIp: !Ref SecurityVPCVMSeriesDataSubnetCIDRAZ1
+      SecurityGroupEgress:
+        - IpProtocol: '-1'  # All protocols
+          CidrIp: 0.0.0.0/0  # All IPs
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Data"
+
+  VMSeriesPublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref SecurityVPC
+      GroupName: !Sub "${SecurityNamePrefix} VM-Series Public"
+      GroupDescription: VM-Series GWLB Data Security Group
+      SecurityGroupIngress: []
+      SecurityGroupEgress:
+        - IpProtocol: '-1'  # All protocols
+          CidrIp: '0.0.0.0/0'  # All IPs
+      Tags:
+        - Key: Name
+          Value: !Sub "${SecurityNamePrefix} VM-Series Public"
+
+
+# ======================================================================================================================
+#   Outputs
+# ======================================================================================================================
+
+Outputs:
+
+  GWLBServiceId:
+    Description: GWLB Service ID for use for additional GWLB Endpoints
+    Value: !GetAtt GWLBESerivceName.Data
+    Export:
+      Name: GWLBServiceId
+
+  KeyName:
+    Description: The SSH KeyPair Name
+    Value: !Ref KeyName
+
+  TgwId:
+    Description: The ID of the Transit Gateway
+    Value: !Ref TransitGateway  
+    Export:
+      Name: TgwId
+
+  TgwSpokeRouteTableId:
+    Description: The ID of the Spoke Transit Gateway Route Table
+    Value: !Ref TGWSpokeRouteTable
+    Export:
+      Name: TgwSpokeRouteTableId
+
+  TgwSecurityRouteTableId:
+    Description: The ID of the Security Transit Gateway Route Table
+    Value: !Ref TGWSecurityRouteTable
+    Export:
+      Name: TgwSecurityRouteTableId
+
+  SecurityVPC:
+    Description: The ID of the Security VPC
+    Value: !Ref SecurityVPC
+    Export:
+      Name: SecurityVPC
+
+  GWLB:
+    Description: The ID of the GWLB
+    Value: !Ref GWLB
+    Export:
+      Name: GWLB
+
+  VMSeriesManagementSecurityGroup:
+    Description: The ID of the VMSeriesManagementSecurityGroup
+    Value: !Ref VMSeriesManagementSecurityGroup
+    Export:
+      Name: VMSeriesManagementSecurityGroup
+
+  NATGWSubnetAZ1:
+    Description: The ID of the NATGWSubnetAZ1
+    Value: !Ref NATGWSubnetAZ1
+    Export:
+      Name: NATGWSubnetAZ1
+
+  VMSeriesPublicSecurityGroup:
+    Description: The ID of the VMSeriesPublicSecurityGroup
+    Value: !Ref VMSeriesPublicSecurityGroup
+    Export:
+      Name: VMSeriesPublicSecurityGroup
+
+  VMSeriesDataSecurityGroup:
+    Description: The ID of the VMSeriesDataSecurityGroup
+    Value: !Ref VMSeriesDataSecurityGroup
+    Export:
+      Name: VMSeriesDataSecurityGroup
+
+  VMSeriesDataSubnetAZ1:
+    Description: The ID of the VMSeriesDataSubnetAZ1
+    Value: !Ref VMSeriesDataSubnetAZ1
+    Export:
+      Name: VMSeriesDataSubnetAZ1
