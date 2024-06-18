@@ -1,0 +1,76 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "ec2:Describe*",
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "elasticloadbalancing:Describe*",
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:ListMetrics",
+                "cloudwatch:GetMetricStatistics",
+                "cloudwatch:Describe*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "autoscaling:Describe*",
+            "Resource": "*"
+        },
+		{
+			"Effect": "Allow",
+			"Action": [
+				"ec2:DeleteTransitGatewayRoute",
+				"ec2:DisableTransitGatewayRouteTablePropagation",
+				"ec2:CreateRoute",
+				"ec2:DeleteRoute",
+				"ec2:EnableTransitGatewayRouteTablePropagation",
+				"ec2:ReplaceTransitGatewayRoute",
+				"ec2:ReplaceRoute"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"ec2:ExportTransitGatewayRoutes",
+				"ec2:GetTransitGatewayRouteTablePropagations",
+				"ec2:GetTransitGatewayAttachmentPropagations",
+				"ec2:GetTransitGatewayPrefixListReferences",
+				"ec2:GetTransitGatewayPolicyTableAssociations",
+				"ec2:GetSubnetCidrReservations",
+				"ec2:GetTransitGatewayMulticastDomainAssociations",
+				"ec2:GetTransitGatewayRouteTableAssociations",
+				"ec2:GetTransitGatewayPolicyTableEntries",
+				"ec2:SearchTransitGatewayRoutes"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"ssm:GetConnectionStatus",
+				"ssm:ResumeSession",
+				"ssm:TerminateSession",
+				"ssm:StartSession"
+			],
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"ssm:DescribeInstanceInformation",
+				"ssm:DescribeSessions"
+			],
+			"Resource": "*"
+		}
+    ]
+}
