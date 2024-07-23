@@ -272,7 +272,7 @@ In this Use Case the VM-Series firewall will inspect inbound traffic towards the
 <br />
 <br /> 
 
-- After you make the appropriate changes in AWS routing and on the Palo Alto Networks Firewall  it should have successfully blocked the attack to the **Beer Store Frontend Webserver** and you should be able to see a **reset-both** log entry in the Palo Alto Networks Monitor Logs -> Threat.
+- After you make the appropriate changes in AWS routing and on the Palo Alto Networks Firewall  it should have successfully blocked the attack to the **Beer Store Frontend Webserver** and you should be able to see a **reset-both** log entry in the Palo Alto Networks Monitor Logs -> Threat. It takes 1-2 min for the logs to show.
 <br />
 <br />
 
