@@ -1193,31 +1193,6 @@ Iwyg
                   <member>weapons</member>
                 </alert>
               </entry>
-              <entry name="default-1">
-                <alert>
-                  <member>high-risk</member>
-                  <member>medium-risk</member>
-                  <member>newly-registered-domain</member>
-                  <member>cryptocurrency</member>
-                  <member>real-time-detection</member>
-                  <member>artificial-intelligence</member>
-                </alert>
-                <local-inline-cat minver="10.2.0">yes</local-inline-cat>
-                <block>
-                  <member>adult</member>
-                  <member>questionable</member>
-                  <member>abused-drugs</member>
-                  <member>hacking</member>
-                  <member>gambling</member>
-                  <member>weapons</member>
-                  <member>malware</member>
-                  <member>phishing</member>
-                  <member>command-and-control</member>
-                  <member>grayware</member>
-                  <member>ransomware</member>
-                  <member>scanning-activity</member>
-                </block>
-              </entry>
             </url-filtering>
             <spyware>
               <entry name="alert">
